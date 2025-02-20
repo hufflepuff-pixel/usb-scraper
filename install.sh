@@ -168,7 +168,7 @@ main() {
     echo "To use the tool:"
     echo "1. Log out and log back in for USB permissions to take effect"
     echo "2. Activate the virtual environment: source venv/bin/activate"
-    echo "3. Run the tool: python3 usb_management.py"
+    echo "3. Run the tool: python3 data_scraper.py"
 }
 
 # Run main installation
