@@ -135,6 +135,7 @@ setup_usb_permissions() {
     # Reload udev rules
     udevadm control --reload-rules
     udevadm trigger
+    exec su -l $USER
     
     print_success "USB permissions configured"
     print_warning "Please log out and log back in for group changes to take effect"
