@@ -6,10 +6,130 @@ import os
 import shutil
 import logging
 import sys
+import subprocess
 from pathlib import Path
 from brand_lookup import get_brand_name
 from datetime import datetime
 from cve_database import scan_for_cve, generate_cve_report
+
+class ADBManager:
+    def __init__(self, debug_window):
+        self.debug_window = debug_window
+        self.adb_path = "adb"  # Assumes adb is in PATH
+    
+    def verify_adb(self):
+        """Verify ADB is installed and accessible"""
+        try:
+            result = subprocess.run([self.adb_path, 'version'], 
+                                  capture_output=True, 
+                                  text=True)
+            if result.returncode == 0:
+                self.debug_window.log("ADB installation verified")
+                return True
+            return False
+        except FileNotFoundError:
+            self.debug_window.log("ADB not found in PATH")
+            return False
+
+    def get_device_list(self):
+        """Get list of connected Android devices"""
+        try:
+            result = subprocess.run([self.adb_path, 'devices'], 
+                                  capture_output=True, 
+                                  text=True)
+            devices = []
+            lines = result.stdout.strip().split('\n')[1:]  # Skip first line
+            for line in lines:
+                if '\t' in line:
+                    serial, status = line.split('\t')
+                    if status == 'device':
+                        devices.append(serial)
+            return devices
+        except Exception as e:
+            self.debug_window.log(f"Error getting Android devices: {str(e)}")
+            return []
+
+    def get_device_info(self, serial):
+        """Get detailed information about an Android device"""
+        try:
+            # Get device model
+            model = subprocess.run(
+                [self.adb_path, '-s', serial, 'shell', 'getprop ro.product.model'],
+                capture_output=True, text=True).stdout.strip()
+            
+            # Get Android version
+            version = subprocess.run(
+                [self.adb_path, '-s', serial, 'shell', 'getprop ro.build.version.release'],
+                capture_output=True, text=True).stdout.strip()
+            
+            # Get manufacturer
+            manufacturer = subprocess.run(
+                [self.adb_path, '-s', serial, 'shell', 'getprop ro.product.manufacturer'],
+                capture_output=True, text=True).stdout.strip()
+            
+            return {
+                'model': model,
+                'android_version': version,
+                'manufacturer': manufacturer,
+                'serial': serial
+            }
+        except Exception as e:
+            self.debug_window.log(f"Error getting device info: {str(e)}")
+            return None
+
+    def adb_pull(self, serial, source_path, dest_path):
+        """Pull files from Android device"""
+        try:
+            result = subprocess.run(
+                [self.adb_path, '-s', serial, 'pull', source_path, dest_path],
+                capture_output=True, text=True)
+            if result.returncode == 0:
+                self.debug_window.log(f"Successfully pulled: {source_path}")
+                return True
+            self.debug_window.log(f"Failed to pull: {result.stderr}")
+            return False
+        except Exception as e:
+            self.debug_window.log(f"Error during adb pull: {str(e)}")
+            return False
+
+    def adb_push(self, serial, source_path, dest_path):
+        """Push files to Android device"""
+        try:
+            result = subprocess.run(
+                [self.adb_path, '-s', serial, 'push', source_path, dest_path],
+                capture_output=True, text=True)
+            if result.returncode == 0:
+                self.debug_window.log(f"Successfully pushed: {source_path}")
+                return True
+            self.debug_window.log(f"Failed to push: {result.stderr}")
+            return False
+        except Exception as e:
+            self.debug_window.log(f"Error during adb push: {str(e)}")
+            return False
+
+    def list_files(self, serial, path):
+        """List files in a directory on Android device"""
+        try:
+            result = subprocess.run(
+                [self.adb_path, '-s', serial, 'shell', f'ls -l {path}'],
+                capture_output=True, text=True)
+            if result.returncode == 0:
+                return result.stdout.strip().split('\n')
+            return []
+        except Exception as e:
+            self.debug_window.log(f"Error listing files: {str(e)}")
+            return []
+
+    def create_directory(self, serial, path):
+        """Create directory on Android device"""
+        try:
+            result = subprocess.run(
+                [self.adb_path, '-s', serial, 'shell', f'mkdir -p {path}'],
+                capture_output=True, text=True)
+            return result.returncode == 0
+        except Exception as e:
+            self.debug_window.log(f"Error creating directory: {str(e)}")
+            return False
 
 class DebugWindow(tk.Toplevel):
     def __init__(self, parent):
@@ -863,6 +983,69 @@ def display_conf_files(file_paths):
                            bg="#2d2d2d", fg="white", relief="flat")
     close_button.pack(side=tk.RIGHT, padx=5)
 
+# Add ADB functions to the main window
+def start_adb_manager():
+    """Initialize ADB manager and check status"""
+    global adb_manager
+    adb_manager = ADBManager(debug_window)
+    if adb_manager.verify_adb():
+        devices = adb_manager.get_device_list()
+        if devices:
+            debug_window.log("Found Android devices:")
+            for serial in devices:
+                info = adb_manager.get_device_info(serial)
+                if info:
+                    debug_window.log(
+                        f"Device: {info['manufacturer']} {info['model']}\n"
+                        f"Android: {info['android_version']}\n"
+                        f"Serial: {info['serial']}"
+                    )
+        else:
+            debug_window.log("No Android devices found")
+    else:
+        debug_window.log("ADB not available - Android features disabled")
+
+def refresh_android_devices():
+    """Refresh the list of Android devices"""
+    if hasattr(root, 'adb_manager'):
+        devices = adb_manager.get_device_list()
+        debug_window.log(f"Found {len(devices)} Android devices")
+        for serial in devices:
+            info = adb_manager.get_device_info(serial)
+            if info:
+                debug_window.log(
+                    f"Device: {info['manufacturer']} {info['model']}\n"
+                    f"Android: {info['android_version']}"
+                )
+
+# Create ADB control UI elements
+def create_adb_controls():
+    """Create ADB-specific UI controls"""
+    adb_frame = tk.LabelFrame(root, text="Android Debug Bridge", bg='#1e1e1e', fg='white')
+    adb_frame.grid(row=10, column=0, columnspan=3, padx=10, pady=10, sticky='ew')
+
+    # ADB Status button
+    adb_status_btn = tk.Button(
+        adb_frame, 
+        text="Check ADB Status", 
+        command=start_adb_manager,
+        bg="#2d2d2d", 
+        fg="white", 
+        relief="flat"
+    )
+    adb_status_btn.pack(side=tk.LEFT, padx=5, pady=5)
+
+    # Refresh Android devices button
+    refresh_android_btn = tk.Button(
+        adb_frame, 
+        text="Refresh Android Devices", 
+        command=refresh_android_devices,
+        bg="#2d2d2d", 
+        fg="white", 
+        relief="flat"
+    )
+    refresh_android_btn.pack(side=tk.LEFT, padx=5, pady=5)
+
 # Initialize the GUI window
 root = tk.Tk()
 root.title("USB File Management")
@@ -952,5 +1135,8 @@ debug_button.grid(row=9, column=0, columnspan=2, padx=10, pady=10)
 style = ttk.Style()
 style.configure("TProgressbar", thickness=20)
 
-# Main loop
+# Add these lines just before root.mainloop()
+create_adb_controls()
+start_adb_manager()
+
 root.mainloop()
